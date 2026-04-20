@@ -187,19 +187,13 @@ class UHandBT:
 if __name__ == "__main__":
     hand = UHandBT()
 
-    # 方式1：自动搜索HC-08
-    devices = hand.discover_hc08()
-    if devices:
-        mac, name = devices[0]
-        hand.connect_rfcomm(mac)
-    else:
-        # 方式2：手动指定MAC地址
-        # hand.connect_rfcomm("00:11:22:33:44:55")
-        pass
+    # HC-08 MAC地址
+    HC08_MAC = "48:87:2D:7E:B4:37"
+
+    # 连接到HC-08
+    hand.connect_rfcomm(HC08_MAC)
 
     if hand.connected:
-        hand.start_receiving()
-
         # 测试命令
         time.sleep(0.5)
 
