@@ -1,13 +1,17 @@
 # bt_uhand.py
 # 飞腾派 V3 与机械手蓝牙通信程序
-# 使用 BLE GATT 协议
-# 需要安装: pip install pexpect (可选)
+# 使用 bleak BLE 库
+# 安装: pip install bleak
 
-import time
-import subprocess
+import asyncio
+from bleak import BleakClient
 
 # HC-08 MAC 地址
 HC08_MAC = "48:87:2D:7E:B4:37"
+
+# HC-08 BLE UUID (串口透传服务)
+SERVICE_UUID = "0000ffe0-0000-1000-8000-00805f9b34fb"
+CHAR_UUID = "0000ffe1-0000-1000-8000-00805f9b34fb"
 
 # 协议常量
 FRAME_HEADER = 0x55
@@ -21,7 +25,7 @@ def build_servo_cmd(servos):
     time_ms = 500
     data = [FRAME_HEADER, FRAME_HEADER]
     data.append(len(servos) * 3 + 3)  # num
-    data.append(CMD_SERVO_MOVE)         # func
+    data.append(CMD_SERVO_MOVE)          # func
     data.append(time_ms & 0xFF)         # time low
     data.append((time_ms >> 8) & 0xFF) # time high
 
@@ -31,158 +35,119 @@ def build_servo_cmd(servos):
         data.append(pos & 0xFF)
         data.append((pos >> 8) & 0xFF)
 
-    return data
+    return bytes(data)
 
 
-def send_via_gatttool(data):
-    """通过 gatttool 发送数据"""
-    # 将数据转换为 hex 字符串
-    hex_str = ''.join(f'{b:02x}' for b in data)
+class UHandBLE:
+    def __init__(self, mac):
+        self.mac = mac
+        self.client = None
+        self.connected = False
 
-    cmd = f'gatttool -b {HC08_MAC} --char-write-req -a 0x0001 -d {hex_str}'
-
-    try:
-        subprocess.run(
-            cmd,
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=2
-        )
-        return True
-    except subprocess.TimeoutExpired:
-        print("[错误] gatttool 超时")
-        return False
-    except Exception as e:
-        print(f"[错误] {e}")
-        return False
-
-
-def connect_ble():
-    """连接 BLE 设备"""
-    print(f"[BLE] 连接到 {HC08_MAC}...")
-
-    # 使用 gatttool 连接
-    cmd = f'gatttool -b {HC08_MAC} -I'
-
-    try:
-        # 启动 gatttool 交互模式
-        proc = subprocess.Popen(
-            cmd,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            shell=True,
-            text=True
-        )
-
-        time.sleep(0.5)
-
-        # 发送连接命令
-        proc.stdin.write("connect\n")
-        proc.stdin.flush()
-        time.sleep(1)
-
-        # 检查是否连接成功
-        output = proc.stderr.read(100)
-        if b'Connection successful' in output or b'connected' in output.lower():
-            print("[BLE] 连接成功!")
-            return proc
-        else:
-            print("[BLE] 连接失败")
-            proc.terminate()
-            return None
-
-    except Exception as e:
-        print(f"[错误] {e}")
-        return None
-
-
-def disconnect_ble(proc):
-    """断开 BLE 连接"""
-    if proc:
+    async def connect(self):
+        """连接 BLE 设备"""
         try:
-            proc.stdin.write("disconnect\n")
-            proc.stdin.flush()
-            time.sleep(0.3)
-            proc.terminate()
-            print("[BLE] 已断开")
-        except:
-            pass
+            self.client = BleakClient(self.mac)
+            await self.client.connect()
+            self.connected = self.client.is_connected
+            return self.connected
+        except Exception as e:
+            print(f"[错误] 连接失败: {e}")
+            return False
+
+    async def disconnect(self):
+        """断开连接"""
+        if self.client:
+            await self.client.disconnect()
+            self.connected = False
+
+    async def send(self, data):
+        """发送数据"""
+        if not self.connected:
+            print("[错误] 未连接")
+            return False
+        try:
+            await self.client.write_gatt_char(CHAR_UUID, data)
+            return True
+        except Exception as e:
+            print(f"[错误] 发送失败: {e}")
+            return False
+
+    async def set_servo(self, idx, angle):
+        """设置单个舵机"""
+        cmd = build_servo_cmd([(idx, angle)])
+        return await self.send(cmd)
+
+    async def set_all_servos(self, angles):
+        """设置所有舵机 [a1,a2,a3,a4,a5,a6]"""
+        servos = [(i+1, angles[i]) for i in range(len(angles))]
+        cmd = build_servo_cmd(servos)
+        return await self.send(cmd)
+
+    async def open_hand(self):
+        """张开手"""
+        servos = [(i+1, 180) for i in range(5)]
+        servos.append((6, 90))
+        cmd = build_servo_cmd(servos)
+        return await self.send(cmd)
+
+    async def close_hand(self):
+        """握拳"""
+        servos = [(i+1, 0) for i in range(5)]
+        servos.append((6, 90))
+        cmd = build_servo_cmd(servos)
+        return await self.send(cmd)
+
+    async def reset(self):
+        """复位"""
+        servos = [(i+1, 90) for i in range(6)]
+        cmd = build_servo_cmd(servos)
+        return await self.send(cmd)
 
 
-def set_all_servos(servos):
-    """设置所有舵机角度"""
-    cmd = build_servo_cmd(servos)
-    send_via_gatttool(cmd)
-
-
-def open_hand():
-    """张开手"""
-    servos = [(i+1, 180) for i in range(5)]
-    servos.append((6, 90))
-    cmd = build_servo_cmd(servos)
-    send_via_gatttool(cmd)
-
-
-def close_hand():
-    """握拳"""
-    servos = [(i+1, 0) for i in range(5)]
-    servos.append((6, 90))
-    cmd = build_servo_cmd(servos)
-    send_via_gatttool(cmd)
-
-
-def reset():
-    """复位"""
-    servos = [(i+1, 90) for i in range(6)]
-    cmd = build_servo_cmd(servos)
-    send_via_gatttool(cmd)
-
-
-def set_servo(idx, angle):
-    """设置单个舵机"""
-    cmd = build_servo_cmd([(idx, angle)])
-    send_via_gatttool(cmd)
-
-
-# ==================== 使用示例 ====================
-if __name__ == "__main__":
+async def main():
     print("=" * 40)
-    print("飞腾派 V3 蓝牙控制机械手")
+    print("飞腾派 V3 蓝牙控制机械手 (bleak)")
     print("=" * 40)
 
-    # 连接 BLE
-    ble = connect_ble()
-    if not ble:
-        print("[错误] 无法连接，请检查 HC-08 是否上电")
-        exit(1)
+    hand = UHandBLE(HC08_MAC)
 
-    time.sleep(0.5)
+    # 连接
+    print(f"\n[BLE] 连接到 {HC08_MAC}...")
+    if await hand.connect():
+        print("[BLE] 连接成功!")
+    else:
+        print("[错误] 连接失败")
+        return
 
     try:
-        # 测试命令
+        # 测试
         print("\n[测试] 复位...")
-        reset()
-        time.sleep(1)
+        await hand.reset()
+        await asyncio.sleep(1)
 
         print("[测试] 张开手...")
-        open_hand()
-        time.sleep(1)
+        await hand.open_hand()
+        await asyncio.sleep(1)
 
         print("[测试] 握拳...")
-        close_hand()
-        time.sleep(1)
+        await hand.close_hand()
+        await asyncio.sleep(1)
 
-        print("[测试] 设置单个舵机...")
-        set_servo(1, 90)
-        time.sleep(0.5)
+        print("[测试] 设置舵机1到90度...")
+        await hand.set_servo(1, 90)
+        await asyncio.sleep(0.5)
 
         print("[测试] 设置所有舵机...")
-        set_all_servos([0, 45, 90, 135, 180, 90])
-        time.sleep(1)
+        await hand.set_all_servos([0, 45, 90, 135, 180, 90])
+        await asyncio.sleep(1)
 
         print("\n[完成] 所有测试完成!")
 
     finally:
-        disconnect_ble(ble)
+        await hand.disconnect()
+        print("[BLE] 已断开")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
