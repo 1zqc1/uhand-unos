@@ -21,11 +21,12 @@ async def find_hc08_services():
             print(f"连接状态: {client.is_connected}\n")
 
             # 获取所有服务
-            services = await client.get_services()
+            services = client.services
             for service in services:
-                print(f"[服务] {service}")
-                for char in service.characteristics:
-                    print(f"  |-- [特征值] {char}")
+                print(f"[服务] {service.uuid}")
+                for char in service.characteristics.values():
+                    print(f"   |-- [特征值] UUID: {char.uuid}")
+                    print(f"   |       属性: {char.properties}")
 
     except Exception as e:
         print(f"[错误] {e}")
