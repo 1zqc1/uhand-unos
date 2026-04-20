@@ -20,19 +20,12 @@ async def find_hc08_services():
         async with BleakClient(HC08_MAC, timeout=10) as client:
             print(f"连接状态: {client.is_connected}\n")
 
-            # 遍历所有服务
-            for service in client.services:
-                print(f"[服务] {service.uuid}")
-                print(f"       {service.description}")
-
-                # 遍历该服务下的所有特征值
+            # 获取所有服务
+            services = await client.get_services()
+            for service in services:
+                print(f"[服务] {service}")
                 for char in service.characteristics:
-                    print(f"   |-- [特征值] UUID: {char.uuid}")
-                    print(f"   |       属性: {char.properties}")
-                    if char.properties:
-                        print(f"   |       可用操作: {', '.join(char.properties)}")
-
-                print()
+                    print(f"  |-- [特征值] {char}")
 
     except Exception as e:
         print(f"[错误] {e}")
