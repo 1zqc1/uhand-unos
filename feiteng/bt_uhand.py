@@ -24,7 +24,8 @@ async def find_hc08_services():
             services = client.services
             for service in services:
                 print(f"[服务] {service.uuid}")
-                for char in service.characteristics.values():
+                # characteristics 是列表
+                for char in service.characteristics:
                     print(f"   |-- [特征值] UUID: {char.uuid}")
                     print(f"   |       属性: {char.properties}")
 
