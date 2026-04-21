@@ -1,13 +1,15 @@
 # bt_uhand.py
 # 飞腾派 V3 与机械手蓝牙通信程序
-# 使用 RFCOMM 串口连接（HC-08 串口透传模式）
-# 安装: pip install pyserial
+# 使用 Bluetooth Socket 连接
+# 安装: pip install pyserial (仅用于调试)
 
-import serial
+import socket
 import time
+import os
 
-# HC-08 串口设备
-DEVICE = "/dev/rfcomm0"
+# HC-08 MAC 地址
+HC08_MAC = "48:87:2D:7E:B4:37"
+RFCOMM_PORT = 1
 
 # 协议常量
 FRAME_HEADER = 0x55
@@ -34,17 +36,30 @@ def build_servo_cmd(servos):
     return bytes(data)
 
 
+def ensure_rfcomm():
+    """确保 rfcomm0 存在"""
+    try:
+        # 检查 rfcomm0 是否存在
+        if not os.path.exists("/dev/rfcomm0"):
+            print("[蓝牙] 绑定 rfcomm0...")
+            os.system(f"rfcomm bind rfcomm0 {HC08_MAC} {RFCOMM_PORT}")
+            time.sleep(1)
+        else:
+            print("[蓝牙] rfcomm0 已存在")
+    except Exception as e:
+        print(f"[错误] {e}")
+
+
 class UHandBT:
-    def __init__(self, device):
-        self.device = device
-        self.ser = None
+    def __init__(self):
+        self.sock = None
 
     def connect(self):
-        """连接串口"""
+        """通过 socket 连接"""
         try:
-            self.ser = serial.Serial(self.device, 9600, timeout=1)
-            time.sleep(0.5)
-            print(f"[连接] 成功连接到 {self.device}")
+            self.sock = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_STREAM, socket.BTPROTO_RFCOMM)
+            self.sock.connect((HC08_MAC, RFCOMM_PORT))
+            print(f"[蓝牙] 连接成功!")
             return True
         except Exception as e:
             print(f"[错误] 连接失败: {e}")
@@ -52,11 +67,11 @@ class UHandBT:
 
     def send(self, data):
         """发送数据"""
-        if not self.ser:
+        if not self.sock:
             print("[错误] 未连接")
             return False
         try:
-            self.ser.write(data)
+            self.sock.send(data)
             print(f"[发送] {[hex(b) for b in data]}")
             return True
         except Exception as e:
@@ -65,36 +80,31 @@ class UHandBT:
 
     def close(self):
         """关闭连接"""
-        if self.ser:
-            self.ser.close()
+        if self.sock:
+            self.sock.close()
 
     def set_servo(self, idx, angle):
-        """设置单个舵机"""
         cmd = build_servo_cmd([(idx, angle)])
         return self.send(cmd)
 
     def set_all_servos(self, angles):
-        """设置所有舵机"""
         servos = [(i+1, angles[i]) for i in range(len(angles))]
         cmd = build_servo_cmd(servos)
         return self.send(cmd)
 
     def open_hand(self):
-        """张开手"""
         servos = [(i+1, 180) for i in range(5)]
         servos.append((6, 90))
         cmd = build_servo_cmd(servos)
         return self.send(cmd)
 
     def close_hand(self):
-        """握拳"""
         servos = [(i+1, 0) for i in range(5)]
         servos.append((6, 90))
         cmd = build_servo_cmd(servos)
         return self.send(cmd)
 
     def reset(self):
-        """复位"""
         servos = [(i+1, 90) for i in range(6)]
         cmd = build_servo_cmd(servos)
         return self.send(cmd)
@@ -102,10 +112,13 @@ class UHandBT:
 
 def main():
     print("=" * 40)
-    print("飞腾派 V3 蓝牙控制机械手 (RFCOMM)")
+    print("飞腾派 V3 蓝牙控制机械手 (Socket)")
     print("=" * 40)
 
-    hand = UHandBT(DEVICE)
+    # 确保 rfcomm0 存在
+    ensure_rfcomm()
+
+    hand = UHandBT()
 
     if hand.connect():
         print("\n[测试] 复位...")
@@ -131,7 +144,7 @@ def main():
         print("\n[完成] 所有测试完成!")
         hand.close()
     else:
-        print("[错误] 无法连接到机械手")
+        print("[错误] 无法连接")
 
 
 if __name__ == "__main__":
